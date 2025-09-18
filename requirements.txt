@@ -17,3 +17,7 @@ python-dotenv>=1.0.0
 
 # AWS S3 access
 boto3>=1.26.0
+botocore>=1.29.0
+
+# Supabase integration
+supabase>=2.0.0

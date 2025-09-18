@@ -2,6 +2,18 @@
 
 Audio Spectrogram Transformer (AST) を使用した音響イベント検出APIのローカル環境プロトタイプ
 
+## 🚀 最新アップデート (v2.0.0) - Supabase統合版
+
+**Whisper APIパターンに準拠したfile_pathsベースの処理を実装しました！**
+
+### 新機能
+- 📊 **Supabase統合**: audio_filesテーブルと完全連携
+- 🔄 **file_pathsベース処理**: Whisper APIと統一されたインターフェース
+- ☁️ **S3直接アクセス**: AWS S3から音声ファイルを直接取得
+- 📈 **ステータス管理**: behavior_features_statusの自動更新
+- 💾 **結果保存**: behavior_yamnetテーブルへのタイムライン形式保存
+- ⚡ **最適化された設定**: 10秒セグメント（オーバーラップなし）で高精度・高速処理
+
 ## 概要
 
 Hugging Faceで公開されている事前学習済みモデル `MIT/ast-finetuned-audioset-10-10-0.4593` を使用して、音声ファイルから音響イベント（Speech、Music、Cough、Laughterなど）を検出するWeb APIサーバーです。
@@ -45,9 +57,20 @@ python3 test_model.py
 
 ## サーバーの起動
 
+### スタンドアロン版（従来版）
 ```bash
 # APIサーバーを起動（ポート8017で動作）
 python3 main.py
+```
+
+### Supabase統合版（推奨）
+```bash
+# 環境変数を設定
+cp .env.example .env
+# .envファイルを編集してSupabaseとAWSの認証情報を設定
+
+# APIサーバーを起動（ポート8018で動作）
+python3 main_supabase.py
 ```
 
 起動成功時の表示:
@@ -100,7 +123,81 @@ curl http://localhost:8017/health
 
 ## エンドポイント
 
-### 1. `/analyze_sound` - 音声ファイル全体の分析
+### Supabase統合版エンドポイント
+
+#### POST `/fetch-and-process-paths` - file_pathsベースの音響イベント検出（推奨）
+
+Whisper APIパターンに準拠した、Supabaseと連携する新しいエンドポイント。
+
+```bash
+curl -X POST "http://localhost:8018/fetch-and-process-paths" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_paths": [
+      "files/d067d407-cf73-4174-a9c1-d91fb60d64d0/2025-07-20/00-00/audio.wav"
+    ],
+    "threshold": 0.1,
+    "top_k": 3,
+    "analyze_timeline": true,
+    "segment_duration": 10.0,
+    "overlap": 0.0
+  }'
+```
+
+##### パラメータ
+- `file_paths`: S3ファイルパスの配列（必須）
+- `threshold`: 最小確率しきい値（オプション、デフォルト: 0.1）
+- `top_k`: 返す予測結果の数（オプション、デフォルト: 3）
+- `analyze_timeline`: タイムライン分析を実行するか（オプション、デフォルト: true）
+- `segment_duration`: セグメントの長さ（秒）（オプション、デフォルト: 10.0） ⚡ **10秒が最適**
+- `overlap`: オーバーラップ率（オプション、デフォルト: 0.0） ⚡ **オーバーラップなしが最適**
+
+##### デフォルト設定について
+**10秒セグメント（オーバーラップなし）**が最も精度が高く、効率的にイベントを検出できることが検証されました：
+- **処理速度**: 1秒設定の約7-8倍高速
+- **検出精度**: 最も安定した検出結果
+- **データ量**: 適切なサイズで後続処理も効率的
+
+##### レスポンス例
+```json
+{
+  "status": "success",
+  "summary": {
+    "total_files": 1,
+    "processed": 1,
+    "errors": 0
+  },
+  "processed_files": ["files/.../audio.wav"],
+  "processed_time_blocks": ["00-00"],
+  "error_files": null,
+  "execution_time_seconds": 8.7,
+  "message": "1件中1件を正常に処理しました"
+}
+```
+
+##### データベース更新
+このエンドポイントは以下のテーブルを自動的に更新します：
+
+1. **audio_files**テーブル
+   - `behavior_features_status`: 'pending' → 'processing' → 'completed'
+
+2. **behavior_yamnet**テーブル（既存のテーブルを使用）
+   - `events`カラムにタイムライン形式でASTの検出結果を保存
+   - 10秒ごとのセグメントで音響イベントを記録
+   
+   保存形式：
+   ```json
+   [
+     {"time": 0.0, "events": [{"label": "Speech", "score": 0.85}, ...]},
+     {"time": 10.0, "events": [{"label": "Music", "score": 0.72}, ...]},
+     {"time": 20.0, "events": [{"label": "Silence", "score": 0.91}, ...]},
+     ...
+   ]
+   ```
+
+### スタンドアロン版エンドポイント
+
+#### 1. `/analyze_sound` - 音声ファイル全体の分析
 
 音声ファイル全体から主要な音響イベントを検出します。
 
