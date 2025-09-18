@@ -66,6 +66,23 @@ INFO:     Uvicorn running on http://127.0.0.1:8017
 
 ## APIの使用方法
 
+### 利用可能なサーバー
+
+このプロジェクトには2つのAPIサーバーがあります：
+
+1. **`main.py`** - 基本的な音響イベント検出
+2. **`main_timeline.py`** - 時系列分析機能付き（推奨）
+
+### サーバーの起動
+
+```bash
+# 時系列分析機能付きサーバー（推奨）
+python3 main_timeline.py
+
+# または基本サーバー
+python3 main.py
+```
+
 ### ヘルスチェック
 
 ```bash
@@ -81,7 +98,11 @@ curl http://localhost:8017/health
 }
 ```
 
-### 音声ファイルの分析
+## エンドポイント
+
+### 1. `/analyze_sound` - 音声ファイル全体の分析
+
+音声ファイル全体から主要な音響イベントを検出します。
 
 ```bash
 # 音声ファイルをアップロードして分析
@@ -90,8 +111,12 @@ curl -X POST "http://localhost:8017/analyze_sound" \
   -H "accept: application/json"
 ```
 
-#### レスポンス例
+#### パラメータ
+- `file`: 音声ファイル（必須）
+  - 対応形式: WAV, MP3, FLAC, OGG, M4A
+- `top_k`: 返す予測結果の数（オプション、デフォルト: 5）
 
+#### レスポンス例
 ```json
 {
   "predictions": [
@@ -109,17 +134,101 @@ curl -X POST "http://localhost:8017/analyze_sound" \
 }
 ```
 
-### パラメータ
+### 2. `/analyze_timeline` - 時系列分析（新機能）
 
-- `file`: 音声ファイル（必須）
-  - 対応形式: WAV, MP3, FLAC, OGG, M4A
-- `top_k`: 返す予測結果の数（オプション、デフォルト: 5）
+音声を時系列で分析し、1秒ごとの音響イベントを検出します。
 
 ```bash
-# 上位10件の結果を取得
-curl -X POST "http://localhost:8017/analyze_sound?top_k=10" \
-  -F "file=@test_audio.wav"
+# 時系列分析（1秒ごと、50%オーバーラップ）
+curl -X POST "http://localhost:8017/analyze_timeline" \
+  -F "file=@test_audio.wav" \
+  -F "segment_duration=1.0" \
+  -F "overlap=0.5" \
+  -F "top_k=3"
 ```
+
+#### パラメータ
+- `file`: 音声ファイル（必須）
+- `segment_duration`: セグメントの長さ（秒）（オプション、デフォルト: 1.0）
+- `overlap`: オーバーラップ率 0-1（オプション、デフォルト: 0.5）
+- `top_k`: 各時刻で返すイベント数（オプション、デフォルト: 3）
+
+#### レスポンス例
+```json
+{
+  "timeline": [
+    {
+      "time": 0.0,
+      "events": [
+        { "label": "Speech", "score": 0.7521 },
+        { "label": "Background noise", "score": 0.1234 },
+        { "label": "Music", "score": 0.0521 }
+      ]
+    },
+    {
+      "time": 0.5,
+      "events": [
+        { "label": "Cough", "score": 0.8921 },
+        { "label": "Throat clearing", "score": 0.0621 },
+        { "label": "Speech", "score": 0.0234 }
+      ]
+    }
+  ],
+  "summary": {
+    "total_segments": 78,
+    "duration_seconds": 39.9,
+    "segment_duration": 1.0,
+    "overlap": 0.5,
+    "most_common_events": [
+      {
+        "label": "Speech",
+        "occurrences": 47,
+        "average_score": 0.352
+      }
+    ]
+  },
+  "audio_info": {
+    "filename": "test_audio.wav",
+    "duration_seconds": 39.9,
+    "sample_rate": 16000
+  }
+}
+```
+
+## S3統合機能
+
+AWS S3から直接音声ファイルを取得して分析できます。
+
+### S3音声ファイルの分析
+
+```bash
+# 基本的な分析
+python3 analyze_s3_audio.py
+
+# 時系列分析
+python3 analyze_s3_timeline.py
+
+# カスタムS3パスを指定
+python3 analyze_s3_timeline.py "files/device_id/date/time/audio.wav"
+```
+
+### 必要な環境変数（.env）
+
+```env
+# AWS S3設定
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+S3_BUCKET_NAME=your_bucket
+AWS_REGION=us-east-1
+```
+
+### 出力ファイル
+
+時系列分析を実行すると、以下のファイルが生成されます：
+
+- `timeline_result.json` - 完全な時系列データ
+- `timeline.csv` - CSV形式の時系列データ（Excel等で開ける）
+- `analysis_result.json` - 全体分析の結果
 
 ## テスト用音声ファイルの作成
 
