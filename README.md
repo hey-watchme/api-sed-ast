@@ -69,7 +69,7 @@ python3 main.py
 cp .env.example .env
 # .envファイルを編集してSupabaseとAWSの認証情報を設定
 
-# APIサーバーを起動（ポート8018で動作）
+# APIサーバーを起動（ポート8017で動作）
 python3 main_supabase.py
 ```
 
@@ -130,7 +130,7 @@ curl http://localhost:8017/health
 Whisper APIパターンに準拠した、Supabaseと連携する新しいエンドポイント。
 
 ```bash
-curl -X POST "http://localhost:8018/fetch-and-process-paths" \
+curl -X POST "http://localhost:8017/fetch-and-process-paths" \
   -H "Content-Type: application/json" \
   -d '{
     "file_paths": [
@@ -393,6 +393,92 @@ lsof -i :8017
 - **入力**: 16kHz サンプリングレートの音声
 - **出力**: 527クラスの確率分布
 - **フレームワーク**: PyTorch + Transformers
+
+## 🚀 本番環境デプロイ状況（2025年9月19日更新）
+
+### ✅ デプロイ完了
+- **ECRリポジトリ**: `754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-ast`
+- **本番環境**: EC2サーバー（3.24.16.82）で正常稼働中
+- **エンドポイント**: `https://api.hey-watch.me/behavior-features/`
+- **ポート**: **8017**（統一）
+- **コンテナ名**: `ast-api`
+- **ネットワーク**: `watchme-network`
+
+### 重要な設定情報
+- **設定ファイル**: `/home/ubuntu/api_ast/.env`
+- **docker-compose**: `/home/ubuntu/api_ast/docker-compose.prod.yml`
+- **メモリ制限**: 2GB（Transformerモデルが大きいため）
+- **Nginx設定**: `/behavior-features/` → `localhost:8017`
+
+### ⚠️ ポート設定の注意
+AST APIは統一して**8017ポート**で動作します：
+```yaml
+# docker-compose.prod.yml
+ports:
+  - "127.0.0.1:8017:8017"  # ポート8017で統一
+```
+
+### デプロイ手順
+
+#### ローカルからのデプロイ
+```bash
+# 1. Dockerイメージをビルド
+docker build -t watchme-api-ast -f Dockerfile.prod .
+
+# 2. ECRにログイン
+aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com
+
+# 3. イメージにタグ付けしてプッシュ
+docker tag watchme-api-ast:latest 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-ast:latest
+docker push 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-ast:latest
+
+# 4. 本番環境にSSH接続してデプロイ
+ssh -i ~/watchme-key.pem ubuntu@3.24.16.82 "cd /home/ubuntu/api_ast && \
+  aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com && \
+  docker pull 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-ast:latest && \
+  docker-compose -f docker-compose.prod.yml down && \
+  docker-compose -f docker-compose.prod.yml up -d"
+
+# 5. デプロイ確認
+curl https://api.hey-watch.me/behavior-features/health
+```
+
+### 運用コマンド
+
+#### SSH接続
+```bash
+# 本番環境へのSSH接続
+ssh -i ~/watchme-key.pem ubuntu@3.24.16.82
+```
+
+#### サービス管理
+```bash
+# コンテナ状態確認
+docker ps | grep ast-api
+
+# ログ確認
+docker logs ast-api --tail 50 -f
+
+# 再起動
+cd /home/ubuntu/api_ast
+docker-compose -f docker-compose.prod.yml restart
+
+# ヘルスチェック
+curl http://localhost:8017/health
+```
+
+### API利用例
+```bash
+# 本番環境での利用
+curl -X POST "https://api.hey-watch.me/behavior-features/fetch-and-process-paths" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_paths": ["files/device_id/date/time/audio.wav"],
+    "threshold": 0.1,
+    "top_k": 3,
+    "segment_duration": 10.0
+  }'
+```
 
 ## ライセンス
 

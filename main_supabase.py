@@ -10,7 +10,7 @@ import json
 import tempfile
 import traceback
 from typing import List, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 
 import torch
@@ -184,13 +184,17 @@ async def save_to_behavior_yamnet(device_id: str, date: str, time_block: str,
         timeline_data: タイムライン形式のイベントデータ
     """
     try:
+        # 現在のUTCタイムスタンプを取得
+        created_at = datetime.now(timezone.utc).isoformat()
+        
         # タイムライン形式のデータをeventsカラムに保存
         data = {
             'device_id': device_id,
             'date': date,
             'time_block': time_block,
             'events': timeline_data,  # タイムライン形式のデータ
-            'status': 'completed'  # ASTによる処理完了
+            'status': 'completed',  # ASTによる処理完了
+            'created_at': created_at  # タイムスタンプを追加
         }
         
         # upsert（既存データがあれば更新、なければ挿入）
@@ -572,7 +576,7 @@ async def fetch_and_process_paths(request: FetchAndProcessPathsRequest):
     return JSONResponse(content=response)
 
 if __name__ == "__main__":
-    # サーバーを起動（ポート8018で動作）
+    # サーバーを起動（ポート8017で動作）
     print("=" * 50)
     print("AST Audio Event Detection API with Supabase")
     print(f"Model: {MODEL_NAME}")
@@ -581,6 +585,6 @@ if __name__ == "__main__":
     uvicorn.run(
         app,
         host="127.0.0.1",
-        port=8018,
+        port=8017,
         log_level="info"
     )
