@@ -355,20 +355,14 @@ def analyze_timeline(audio_data: np.ndarray, sample_rate: int,
     timeline = []
     all_events = {}
     
-    # セグメントごとに処理
-    for i in range(0, len(processed_audio) - segment_samples + 1, hop_samples):
-        segment = processed_audio[i:i + segment_samples]
-        time_position = i / target_sr
-        
-        # セグメントの予測
-        events = predict_audio_events(segment, top_k, threshold)
-        
-        # タイムラインに追加
+    # 音声が短い場合（segment_duration未満）は全体を1セグメントとして処理
+    if len(processed_audio) < segment_samples:
+        # 短い音声は全体を1つのセグメントとして処理
+        events = predict_audio_events(processed_audio, top_k, threshold)
         timeline.append({
-            "time": round(time_position, 1),
+            "time": 0.0,
             "events": events
         })
-        
         # イベントの集計
         for event in events:
             label = event["label"]
@@ -376,6 +370,28 @@ def analyze_timeline(audio_data: np.ndarray, sample_rate: int,
                 all_events[label] = {"count": 0, "total_score": 0}
             all_events[label]["count"] += 1
             all_events[label]["total_score"] += event["score"]
+    else:
+        # 通常のセグメント処理
+        for i in range(0, len(processed_audio) - segment_samples + 1, hop_samples):
+            segment = processed_audio[i:i + segment_samples]
+            time_position = i / target_sr
+            
+            # セグメントの予測
+            events = predict_audio_events(segment, top_k, threshold)
+            
+            # タイムラインに追加
+            timeline.append({
+                "time": round(time_position, 1),
+                "events": events
+            })
+            
+            # イベントの集計
+            for event in events:
+                label = event["label"]
+                if label not in all_events:
+                    all_events[label] = {"count": 0, "total_score": 0}
+                all_events[label]["count"] += 1
+                all_events[label]["total_score"] += event["score"]
     
     # 最も頻繁なイベントを集計
     most_common = []

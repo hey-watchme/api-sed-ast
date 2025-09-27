@@ -11,7 +11,7 @@ Audio Spectrogram Transformer (AST) を使用した音響イベント検出API�
 - 🔄 **file_pathsベース処理**: Whisper APIと統一されたインターフェース
 - ☁️ **S3直接アクセス**: AWS S3から音声ファイルを直接取得
 - 📈 **ステータス管理**: behavior_features_statusの自動更新
-- 💾 **結果保存**: behavior_yamnetテーブルへのタイムライン形式保存
+- 💾 **結果保存**: behavior_yamnetテーブルへのタイムライン形式保存（テーブル名は歴史的経緯でyamnetだが、AST結果を保存）
 - ⚡ **最適化された設定**: 10秒セグメント（オーバーラップなし）で高精度・高速処理
 
 ## 概要
@@ -181,7 +181,7 @@ curl -X POST "http://localhost:8017/fetch-and-process-paths" \
 1. **audio_files**テーブル
    - `behavior_features_status`: 'pending' → 'processing' → 'completed'
 
-2. **behavior_yamnet**テーブル（既存のテーブルを使用）
+2. **behavior_yamnet**テーブル（歴史的経緯により名前はyamnetだが、現在はASTの結果を格納）
    - `events`カラムにタイムライン形式でASTの検出結果を保存
    - 10秒ごとのセグメントで音響イベントを記録
    

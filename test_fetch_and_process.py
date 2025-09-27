@@ -9,7 +9,7 @@ import json
 from datetime import datetime, timedelta
 
 # APIのベースURL
-BASE_URL = "http://localhost:8018"
+BASE_URL = "http://localhost:8017"
 
 def test_health():
     """ヘルスチェック"""

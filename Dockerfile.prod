@@ -1,0 +1,39 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# 必要なシステムライブラリとcurlをインストール（ヘルスチェック用）
+RUN apt-get update && apt-get install -y \
+    libsndfile1 \
+    libgomp1 \
+    curl \
+    ffmpeg \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# requirements.txtをコピーしてパッケージをインストール
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir boto3 botocore
+
+# アプリケーションコードをコピー
+COPY main_supabase.py main.py
+COPY main_timeline.py .
+COPY analyze_s3_audio.py .
+COPY analyze_s3_timeline.py .
+
+# Python環境変数の設定
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# ポートを公開（ASTは8017で動作）
+EXPOSE 8017
+
+# ヘルスチェック設定
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8017/health || exit 1
+
+# アプリケーションの実行
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8017", "--log-level", "info"]
