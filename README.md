@@ -397,7 +397,7 @@ lsof -i :8017
 ## 🚀 本番環境デプロイ状況（2025年9月19日更新）
 
 ### ✅ デプロイ完了
-- **ECRリポジトリ**: `754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-ast`
+- **ECRリポジトリ**: `754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-sed-ast`
 - **本番環境**: EC2サーバー（3.24.16.82）で正常稼働中
 - **エンドポイント**: `https://api.hey-watch.me/behavior-features/`
 - **ポート**: **8017**（統一）
@@ -423,19 +423,19 @@ ports:
 #### ローカルからのデプロイ
 ```bash
 # 1. Dockerイメージをビルド
-docker build -t watchme-api-ast -f Dockerfile.prod .
+docker build -t watchme-api-sed-ast -f Dockerfile.prod .
 
 # 2. ECRにログイン
 aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com
 
 # 3. イメージにタグ付けしてプッシュ
-docker tag watchme-api-ast:latest 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-ast:latest
-docker push 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-ast:latest
+docker tag watchme-api-sed-ast:latest 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-sed-ast:latest
+docker push 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-sed-ast:latest
 
 # 4. 本番環境にSSH接続してデプロイ
 ssh -i ~/watchme-key.pem ubuntu@3.24.16.82 "cd /home/ubuntu/api_ast && \
   aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com && \
-  docker pull 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-ast:latest && \
+  docker pull 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-sed-ast:latest && \
   docker-compose -f docker-compose.prod.yml down && \
   docker-compose -f docker-compose.prod.yml up -d"
 

@@ -2,7 +2,7 @@
 
 # ECR設定
 ECR_REGISTRY="754724220380.dkr.ecr.ap-southeast-2.amazonaws.com"
-ECR_REPOSITORY="watchme-api-ast"
+ECR_REPOSITORY="watchme-api-sed-ast"
 IMAGE_TAG="latest"
 REGION="ap-southeast-2"
 
