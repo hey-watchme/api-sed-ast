@@ -1,4 +1,5 @@
 # AST Audio Event Detection API - ECR & EC2 自動デプロイワークフロー
+# Version: 2025-01-27
 name: Deploy to Amazon ECR and EC2
 
 # このワークフローが実行されるタイミング
@@ -24,6 +25,20 @@ jobs:
     # ステップ1: コードのチェックアウト
     - name: Checkout code
       uses: actions/checkout@v4
+
+    # デバッグ: Secretsの存在確認
+    - name: Check secrets availability
+      run: |
+        if [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ]; then
+          echo "❌ AWS_ACCESS_KEY_ID is not set"
+        else
+          echo "✅ AWS_ACCESS_KEY_ID is available"
+        fi
+        if [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then
+          echo "❌ AWS_SECRET_ACCESS_KEY is not set"
+        else
+          echo "✅ AWS_SECRET_ACCESS_KEY is available"
+        fi
 
     # ステップ2: AWS認証情報の設定
     - name: Configure AWS credentials
