@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   api:
-    image: 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-sed-ast:latest
+    image: 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-ast:latest
     container_name: ast-api
     ports:
       - "127.0.0.1:8017:8017"

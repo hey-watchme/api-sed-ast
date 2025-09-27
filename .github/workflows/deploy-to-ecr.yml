@@ -1,5 +1,4 @@
 # AST Audio Event Detection API - ECR & EC2 自動デプロイワークフロー
-# Version: 2025-01-27
 name: Deploy to Amazon ECR and EC2
 
 # このワークフローが実行されるタイミング
@@ -13,7 +12,7 @@ on:
 # 環境変数
 env:
   AWS_REGION: ap-southeast-2
-  ECR_REPOSITORY: watchme-api-sed-ast
+  ECR_REPOSITORY: watchme-api-ast
 
 # ジョブの定義
 jobs:
@@ -26,23 +25,9 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # デバッグ: Secretsの存在確認
-    - name: Check secrets availability
-      run: |
-        if [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ]; then
-          echo "❌ AWS_ACCESS_KEY_ID is not set"
-        else
-          echo "✅ AWS_ACCESS_KEY_ID is available"
-        fi
-        if [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then
-          echo "❌ AWS_SECRET_ACCESS_KEY is not set"
-        else
-          echo "✅ AWS_SECRET_ACCESS_KEY is available"
-        fi
-
     # ステップ2: AWS認証情報の設定
     - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v2
+      uses: aws-actions/configure-aws-credentials@v4
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}

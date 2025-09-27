@@ -403,7 +403,7 @@ lsof -i :8017
 2025年1月より、GitHub Actionsを使用した完全自動デプロイに移行しました。mainブランチへのプッシュで自動的にデプロイが実行されます。
 
 ### ✅ インフラ情報
-- **ECRリポジトリ**: `754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-sed-ast`
+- **ECRリポジトリ**: `754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-ast`
 - **本番環境**: EC2サーバー（3.24.16.82）で正常稼働中
 - **エンドポイント**: `https://api.hey-watch.me/behavior-features/`
 - **ポート**: **8017**（統一）

@@ -8,7 +8,7 @@ echo "🚀 Starting AST Audio Event Detection API deployment..."
 # 環境変数の設定
 export AWS_REGION="ap-southeast-2"
 export ECR_REGISTRY="754724220380.dkr.ecr.ap-southeast-2.amazonaws.com"
-export ECR_REPOSITORY="watchme-api-sed-ast"
+export ECR_REPOSITORY="watchme-api-ast"
 export CONTAINER_NAME="ast-api"
 
 # ECRログイン
