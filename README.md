@@ -394,9 +394,15 @@ lsof -i :8017
 - **出力**: 527クラスの確率分布
 - **フレームワーク**: PyTorch + Transformers
 
-## 🚀 本番環境デプロイ状況（2025年9月19日更新）
+## 🚀 本番環境デプロイ（2025年1月更新 - CI/CD完全自動化）
 
-### ✅ デプロイ完了
+### 🎉 新機能: GitHub Actions CI/CD導入
+
+**重要: デプロイ方法が完全に変更されました！**
+
+2025年1月より、GitHub Actionsを使用した完全自動デプロイに移行しました。mainブランチへのプッシュで自動的にデプロイが実行されます。
+
+### ✅ インフラ情報
 - **ECRリポジトリ**: `754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-sed-ast`
 - **本番環境**: EC2サーバー（3.24.16.82）で正常稼働中
 - **エンドポイント**: `https://api.hey-watch.me/behavior-features/`
@@ -404,11 +410,58 @@ lsof -i :8017
 - **コンテナ名**: `ast-api`
 - **ネットワーク**: `watchme-network`
 
-### 重要な設定情報
-- **設定ファイル**: `/home/ubuntu/api_ast/.env`
-- **docker-compose**: `/home/ubuntu/api_ast/docker-compose.prod.yml`
-- **メモリ制限**: 2GB（Transformerモデルが大きいため）
-- **Nginx設定**: `/behavior-features/` → `localhost:8017`
+### 🚀 自動デプロイ（CI/CD）- 推奨方法
+
+#### 1. 通常のデプロイ（mainブランチへのプッシュ）
+```bash
+# コードの変更をコミット
+git add .
+git commit -m "feat: 新機能の追加"
+
+# mainブランチにプッシュ → 自動デプロイ開始
+git push origin main
+```
+
+**これだけで以下が自動実行されます:**
+1. DockerイメージのビルD（ARM64対応）
+2. AWS ECRへのプッシュ
+3. EC2サーバーへの自動デプロイ
+4. ヘルスチェック
+
+#### 2. 手動実行（GitHub Actions UI）
+1. GitHubリポジトリの「Actions」タブを開く
+2. 「Deploy to Amazon ECR and EC2」ワークフローを選択
+3. 「Run workflow」ボタンをクリック
+
+#### 3. デプロイ状況の確認
+- GitHub Actions: リポジトリの「Actions」タブで進捗確認
+- デプロイ完了後: `https://api.hey-watch.me/behavior-features/health`
+
+### 📋 CI/CDパイプラインの流れ
+
+```mermaid
+graph LR
+    A[コードをpush] --> B[GitHub Actions起動]
+    B --> C[Dockerイメージビルド<br/>ARM64対応]
+    C --> D[AWS ECRにプッシュ]
+    D --> E[EC2に自動SSH接続]
+    E --> F[最新イメージをデプロイ]
+    F --> G[ヘルスチェック]
+```
+
+### 🔧 必要な設定（すべて設定済み）
+
+#### GitHub Secrets（設定済み）
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY` 
+- `EC2_SSH_PRIVATE_KEY`
+- `EC2_HOST`
+- `EC2_USER`
+
+#### EC2側の設定
+- **アプリケーションディレクトリ**: `/home/ubuntu/api_ast`
+- **環境変数**: `/home/ubuntu/api_ast/.env`
+- **デプロイスクリプト**: `./run-prod.sh`
 
 ### ⚠️ ポート設定の注意
 AST APIは統一して**8017ポート**で動作します：
@@ -418,29 +471,19 @@ ports:
   - "127.0.0.1:8017:8017"  # ポート8017で統一
 ```
 
-### デプロイ手順
+### 📝 手動デプロイ（非推奨・緊急時のみ）
 
-#### ローカルからのデプロイ
+CI/CDが利用できない場合の手動デプロイ方法：
+
 ```bash
-# 1. Dockerイメージをビルド
-docker build -t watchme-api-sed-ast -f Dockerfile.prod .
+# 1. EC2にSSH接続
+ssh -i ~/watchme-key.pem ubuntu@3.24.16.82
 
-# 2. ECRにログイン
-aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com
+# 2. アプリケーションディレクトリに移動
+cd /home/ubuntu/api_ast
 
-# 3. イメージにタグ付けしてプッシュ
-docker tag watchme-api-sed-ast:latest 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-sed-ast:latest
-docker push 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-sed-ast:latest
-
-# 4. 本番環境にSSH接続してデプロイ
-ssh -i ~/watchme-key.pem ubuntu@3.24.16.82 "cd /home/ubuntu/api_ast && \
-  aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com && \
-  docker pull 754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-api-sed-ast:latest && \
-  docker-compose -f docker-compose.prod.yml down && \
-  docker-compose -f docker-compose.prod.yml up -d"
-
-# 5. デプロイ確認
-curl https://api.hey-watch.me/behavior-features/health
+# 3. デプロイスクリプト実行
+./run-prod.sh
 ```
 
 ### 運用コマンド
