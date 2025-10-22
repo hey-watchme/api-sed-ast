@@ -12,7 +12,7 @@ on:
 # 環境変数
 env:
   AWS_REGION: ap-southeast-2
-  ECR_REPOSITORY: watchme-api-ast
+  ECR_REPOSITORY: watchme-behavior-analysis-feature-extractor-v2
 
 # ジョブの定義
 jobs:
