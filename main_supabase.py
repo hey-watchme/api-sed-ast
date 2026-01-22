@@ -549,6 +549,22 @@ async def process_in_background(file_path: str, device_id: str, recorded_at: str
     """Background processing function"""
     print(f"Background processing started for {device_id}")
 
+    # Check if already completed to prevent duplicate processing
+    try:
+        response = supabase.table('spot_features').select('behavior_status').eq(
+            'device_id', device_id
+        ).eq(
+            'recorded_at', recorded_at
+        ).execute()
+
+        if response.data and len(response.data) > 0:
+            current_status = response.data[0].get('behavior_status')
+            if current_status == 'completed':
+                print(f"Already completed, skipping processing: {device_id}/{recorded_at}")
+                return
+    except Exception as e:
+        print(f"Failed to check status: {e}")
+
     # Update status to 'processing'
     try:
         update_status(device_id, recorded_at, "behavior_status", "processing")
