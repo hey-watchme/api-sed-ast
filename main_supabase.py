@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
 """
-AST (Audio Spectrogram Transformer) Sound Event Detection API - Supabase Integration
-file_paths-based processing with audio_files table integration
-
-Model: MIT/ast-finetuned-audioset-10-10-0.4593
-Sampling Rate: 16kHz
-Library: transformers (Hugging Face)
+Sound Event Detection API - Supabase Integration
+file_paths-based processing with audio_files table integration.
 """
 
 import os
-import io
 import json
 import tempfile
 import traceback
@@ -17,11 +12,9 @@ from typing import List, Dict, Optional
 from datetime import datetime, timezone
 import time
 
-import torch
 import numpy as np
 import librosa
 import soundfile as sf
-from transformers import AutoFeatureExtractor, ASTForAudioClassification
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,16 +32,11 @@ load_dotenv()
 
 # Event filtering
 from event_filter_config import apply_event_filter, get_filter_stats
+from model_backends import BaseSedBackend, create_backend
 
-# Global variables for model
-model = None
-feature_extractor = None
-id2label = None
-
-# Model information
-MODEL_NAME = "MIT/ast-finetuned-audioset-10-10-0.4593"
-MODEL_DESCRIPTION = "Audio Spectrogram Transformer - AudioSet (mAP: 0.459)"
-SAMPLING_RATE = 16000
+# Global model backend (switchable)
+sed_backend: Optional[BaseSedBackend] = None
+DEFAULT_SAMPLING_RATE = 16000
 
 # Supabaseクライアントの初期化
 supabase_url = os.getenv('SUPABASE_URL')
@@ -110,33 +98,34 @@ class FetchAndProcessPathsRequest(BaseModel):
     overlap: Optional[float] = 0.0  # オーバーラップなしが最適
 
 def load_model():
-    """Load AST model and feature extractor"""
-    global model, feature_extractor, id2label
+    """Load configured SED backend model."""
+    global sed_backend
 
-    print(f"🔄 Loading model: {MODEL_NAME}")
     try:
-        feature_extractor = AutoFeatureExtractor.from_pretrained(MODEL_NAME)
-        model = ASTForAudioClassification.from_pretrained(MODEL_NAME)
-
-        # Get label mapping
-        id2label = model.config.id2label
-
-        # Set device
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model.to(device)
-        model.eval()
-
-        print(f"✅ Model loaded successfully")
-        print(f"   - Model: {MODEL_NAME}")
-        print(f"   - Device: {device}")
-        print(f"   - Classes: {len(id2label)} (AudioSet)")
-        print(f"   - Sampling Rate: {SAMPLING_RATE} Hz (16kHz)")
-        print(f"   - Performance: mAP 0.459 (AudioSet)")
-
+        sed_backend = create_backend()
+        sed_backend.load()
     except Exception as e:
-        print(f"❌ Failed to load model: {str(e)}")
+        print(f"❌ Failed to load model backend: {str(e)}")
         traceback.print_exc()
         raise
+
+
+def get_model_name() -> str:
+    if sed_backend is not None:
+        return sed_backend.model_name
+    return os.getenv("SED_MODEL_NAME", "MIT/ast-finetuned-audioset-10-10-0.4593")
+
+
+def get_sampling_rate() -> int:
+    if sed_backend is not None:
+        return sed_backend.sample_rate
+    return DEFAULT_SAMPLING_RATE
+
+
+def get_backend_id() -> str:
+    if sed_backend is not None:
+        return sed_backend.backend_id
+    return os.getenv("SED_MODEL_BACKEND", "ast_hf")
 
 def extract_info_from_file_path(file_path: str) -> Dict[str, str]:
     """
@@ -250,8 +239,8 @@ def process_audio(audio_data: np.ndarray, sample_rate: int) -> np.ndarray:
     if len(audio_data.shape) > 1:
         audio_data = np.mean(audio_data, axis=1)
 
-    # Resample to model's expected sampling rate (16kHz)
-    target_sr = feature_extractor.sampling_rate
+    # Resample to model backend's expected sampling rate
+    target_sr = get_sampling_rate()
     if sample_rate != target_sr:
         audio_data = librosa.resample(
             audio_data,
@@ -283,39 +272,14 @@ def predict_audio_events(audio_data: np.ndarray, top_k: int = 5,
     Returns:
         List of predicted events
     """
-    # Extract features
-    inputs = feature_extractor(
-        audio_data,
-        sampling_rate=feature_extractor.sampling_rate,
-        return_tensors="pt"
+    if sed_backend is None:
+        raise RuntimeError("Model backend is not loaded")
+
+    predictions = sed_backend.predict_events(
+        audio_data=audio_data,
+        top_k=top_k,
+        threshold=threshold
     )
-
-    # Move to device
-    device = next(model.parameters()).device
-    inputs = {k: v.to(device) for k, v in inputs.items()}
-
-    # Run inference
-    with torch.no_grad():
-        outputs = model(**inputs)
-        logits = outputs.logits
-
-    # Convert to probabilities
-    probs = torch.nn.functional.softmax(logits, dim=-1)[0]
-
-    # Get top-k predictions
-    top_probs, top_indices = torch.topk(probs, min(top_k, len(probs)))
-
-    # Format results
-    predictions = []
-    for prob, idx in zip(top_probs.cpu(), top_indices.cpu()):
-        score = prob.item()
-        if score >= threshold:
-            label_id = idx.item()
-            label = id2label.get(label_id) or id2label.get(str(label_id)) or f"Event_{label_id}"
-            predictions.append({
-                "label": label,
-                "score": round(score, 4)
-            })
 
     # Apply event filtering (v2 feature)
     predictions = apply_event_filter(predictions)
@@ -343,7 +307,7 @@ def analyze_timeline(audio_data: np.ndarray, sample_rate: int,
     """
     # Preprocess audio
     processed_audio = process_audio(audio_data, sample_rate)
-    target_sr = feature_extractor.sampling_rate
+    target_sr = get_sampling_rate()
 
     # Segment configuration
     segment_samples = int(segment_duration * target_sr)
@@ -484,11 +448,12 @@ async def startup_event():
 async def root():
     """Root endpoint"""
     return {
-        "message": "AST Audio Event Detection API with Supabase Integration (v2 with Event Filtering)",
-        "model": MODEL_NAME,
+        "message": "Audio Event Detection API with Supabase Integration (Pluggable backend)",
+        "backend": get_backend_id(),
+        "model": get_model_name(),
         "version": "2.1.0",
-        "sampling_rate": f"{SAMPLING_RATE} Hz (16kHz)",
-        "status": "ready" if model is not None else "not ready",
+        "sampling_rate": f"{get_sampling_rate()} Hz",
+        "status": "ready" if sed_backend is not None else "not ready",
         "endpoints": {
             "/fetch-and-process-paths": "Process audio files from S3 via file paths",
             "/health": "Health check endpoint",
@@ -501,10 +466,11 @@ async def health_check():
     """Health check endpoint"""
     filter_stats = get_filter_stats()
     return {
-        "status": "healthy" if model is not None else "unhealthy",
-        "model_loaded": model is not None,
-        "model_name": MODEL_NAME,
-        "sampling_rate": SAMPLING_RATE,
+        "status": "healthy" if sed_backend is not None else "unhealthy",
+        "model_loaded": sed_backend is not None,
+        "backend": get_backend_id(),
+        "model_name": get_model_name(),
+        "sampling_rate": get_sampling_rate(),
         "supabase_connected": supabase is not None,
         "s3_connected": s3_client is not None,
         "event_filtering": filter_stats
@@ -573,6 +539,9 @@ async def process_in_background(file_path: str, device_id: str, recorded_at: str
 
     try:
         result = await process_single_file(file_path)
+
+        if result.get("status") != "success":
+            raise RuntimeError(result.get("error", "Unknown processing error"))
 
         update_status(device_id, recorded_at, "behavior_status", "completed")
 
@@ -646,7 +615,7 @@ async def fetch_and_process_paths(request: FetchAndProcessPathsRequest):
     Returns:
         処理結果のサマリーと詳細
     """
-    if model is None:
+    if sed_backend is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
 
     start_time = time.time()
@@ -699,9 +668,10 @@ async def fetch_and_process_paths(request: FetchAndProcessPathsRequest):
 
 if __name__ == "__main__":
     print("=" * 50)
-    print("AST Audio Event Detection API with Supabase")
-    print(f"Model: {MODEL_NAME}")
-    print(f"Sampling Rate: {SAMPLING_RATE} Hz (16kHz)")
+    print("Audio Event Detection API with Supabase")
+    print(f"Backend: {get_backend_id()}")
+    print(f"Model: {get_model_name()}")
+    print(f"Sampling Rate: {get_sampling_rate()} Hz")
     print("=" * 50)
 
     uvicorn.run(

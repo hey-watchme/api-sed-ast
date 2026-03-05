@@ -23,6 +23,7 @@ COPY main_timeline.py .
 COPY analyze_s3_audio.py .
 COPY analyze_s3_timeline.py .
 COPY event_filter_config.py .
+COPY model_backends ./model_backends
 
 # Python環境変数の設定
 ENV PYTHONPATH=/app
