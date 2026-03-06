@@ -41,8 +41,15 @@ SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZi
 # AWS S3設定
 AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
 AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-S3_BUCKET_NAME=watchme-audio-files
+S3_BUCKET_NAME=watchme-vault
 AWS_REGION=ap-southeast-2
+FEATURE_COMPLETED_QUEUE_URL=https://sqs.ap-southeast-2.amazonaws.com/754724220380/watchme-feature-completed-queue
+
+# SED backend設定
+SED_MODEL_BACKEND=ast_hf
+SED_MODEL_NAME=MIT/ast-finetuned-audioset-10-10-0.4593
+SED_ENABLE_BLACKLIST_FILTER=false
+SED_ENABLE_LABEL_MERGE=false
 EOF
         echo "✅ .env file created with production credentials"
     fi
@@ -85,5 +92,5 @@ echo "🧹 Cleaning up old images..."
 docker image prune -f
 
 echo "✅ Deployment completed successfully!"
-echo "🌐 API is available at: https://api.hey-watch.me/behavior-features/"
-echo "📍 Health endpoint: https://api.hey-watch.me/behavior-features/health"
+echo "🌐 API is available at: https://api.hey-watch.me/behavior-analysis/features/"
+echo "📍 Health endpoint: https://api.hey-watch.me/behavior-analysis/features/health"

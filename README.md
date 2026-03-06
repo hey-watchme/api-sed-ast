@@ -1,14 +1,20 @@
 # AST Audio Event Detection API
 
-Audio Spectrogram Transformer (AST) を使用した音響イベント検出APIのローカル環境プロトタイプ
+Audio Spectrogram Transformer (AST) を使用した音響イベント検出APIです。
 
-## 🚀 最新アップデート (v2.1.0) - イベントフィルタリング機能追加
+## ⚠️ このREADMEの前提
 
-**不要なイベントの除外と類似イベントの統合機能を実装しました！**
+このREADMEは現在のコードベース実装に合わせて記述しています。
 
-### 新機能（v2.1.0）
-- 🎯 **イベントフィルタリング**: ノイズ・虫・不要な動物音などを除外（60種類以上）
-- 🔄 **ラベル統合**: 類似イベントを統合（150種類以上を統合）
+- 本番で使うAPIサーバーは `main_supabase.py`
+- `main.py` と `main_timeline.py` はローカル検証用のスタンドアロンAPI
+- APIバージョン表記は `3.0.0` に統一済み
+
+## 🚀 現在の実装要点
+
+### 実装済み機能
+- 🎯 **イベントフィルタリング**: 環境変数でON/OFF可能。現在の標準は raw 出力
+- 🔄 **ラベル統合**: 環境変数でON/OFF可能。現在の標準は raw 出力
   - 音楽ジャンル → Music
   - 乗り物 → Vehicle
   - エンジン音 → Engine
@@ -17,13 +23,12 @@ Audio Spectrogram Transformer (AST) を使用した音響イベント検出API�
 - ⚙️ **ON/OFF切り替え**: `event_filter_config.py`で簡単に有効化/無効化
 - 📊 **フィルタ設定確認**: `/filter-config`エンドポイントで現在の設定を確認可能
 
-### 既存機能（v2.0.0）
-- 📊 **Supabase統合**: audio_filesテーブルと完全連携
-- 🔄 **file_pathsベース処理**: Whisper APIと統一されたインターフェース
+### 既存機能
+- 📊 **Supabase統合**: `audio_files` を参照し、結果は `spot_features` に保存
 - ☁️ **S3直接アクセス**: AWS S3から音声ファイルを直接取得
-- 📈 **ステータス管理**: behavior_features_statusの自動更新
-- 💾 **結果保存**: behavior_yamnetテーブルへのタイムライン形式保存（テーブル名は歴史的経緯でyamnetだが、AST結果を保存）
-- ⚡ **最適化された設定**: 10秒セグメント（オーバーラップなし）で高精度・高速処理
+- 📈 **ステータス管理**: `spot_features.behavior_status` を更新
+- ⚡ **現行デフォルト設定**: 2秒セグメント、50%オーバーラップ、`top_k=5`、`threshold=0.1`
+- 🔌 **非同期処理**: `/async-process` が 202 Accepted を返し、バックグラウンド処理後に SQS へ完了通知
 
 ---
 
@@ -31,8 +36,9 @@ Audio Spectrogram Transformer (AST) を使用した音響イベント検出API�
 
 | 項目 | 値 | 説明 |
 |------|-----|------|
-| **🏷️ サービス名** | Behavior Features API (v2) | 音響イベント検出（527種類・フィルタリング対応） |
-| **📦 モデル** | AST v2.1 | Audio Spectrogram Transformer + Event Filtering |
+| **🏷️ サービス名** | Behavior Features API | 音響イベント検出（527種類・フィルタリング対応） |
+| **📦 モデル** | `MIT/ast-finetuned-audioset-10-10-0.4593` | デフォルトのHugging Face ASTモデル |
+| **🧠 バックエンド** | `ast_hf` | 現在コードで実装されている唯一のSED backend |
 | | | |
 | **🌐 外部アクセス（Nginx）** | | |
 | └ 公開エンドポイント | `https://api.hey-watch.me/behavior-analysis/features/` | Lambdaから呼ばれるパス |
@@ -42,10 +48,9 @@ Audio Spectrogram Transformer (AST) を使用した音響イベント検出API�
 | | | |
 | **🔌 API内部エンドポイント** | | |
 | └ ヘルスチェック | `/health` | GET |
-| └ フィルタ設定確認 | `/filter-config` | GET（v2.1新機能） |
-| └ ファイル分析 | `/analyze_sound` | POST |
-| └ タイムライン分析 | `/analyze_timeline` | POST |
-| └ **S3統合（重要）** | `/fetch-and-process-paths` | POST - Lambdaが呼ぶ |
+| └ フィルタ設定確認 | `/filter-config` | GET |
+| └ **非同期処理（本番の入口）** | `/async-process` | POST - Lambdaが呼ぶ |
+| └ **S3統合（直接実行用）** | `/fetch-and-process-paths` | POST - file_paths配列を直接処理 |
 | | | |
 | **🐳 Docker/コンテナ** | | |
 | └ コンテナ名 | `behavior-analysis-feature-extractor` | `docker ps`で表示される名前 |
@@ -73,16 +78,18 @@ Audio Spectrogram Transformer (AST) を使用した音響イベント検出API�
 
 ## 概要
 
-Hugging Faceで公開されている事前学習済みモデル `MIT/ast-finetuned-audioset-10-10-0.4593` を使用して、音声ファイルから音響イベント（Speech、Music、Cough、Laughterなど）を検出するWeb APIサーバーです。
+Hugging Faceで公開されている事前学習済みモデル `MIT/ast-finetuned-audioset-10-10-0.4593` を使用して、音声ファイルから音響イベント（Speech、Music、Cough、Laughterなど）を検出するWeb APIサーバーです。現在の本番実装は pluggable backend 構成ですが、コード上で利用可能なのは `ast_hf` backend のみです。
 
 ## 特徴
 
 - 🎯 **527種類の音響イベント**を検出可能（AudioSetベース）
 - 🚀 **Transformerベース**の最新アーキテクチャ
-- 📊 **確率スコア付き**で上位5件の予測結果を返す
+- 📊 **確率スコア付き**でイベントを返す
 - 🔧 **FastAPI**による高速なAPIサーバー
-- 🎯 **イベントフィルタリング** - 60種類以上の不要イベントを除外（v2.1）
-- 🔄 **ラベル統合** - 150種類以上の類似イベントを統合（v2.1）
+- 🎯 **イベントフィルタリング** - `SED_ENABLE_BLACKLIST_FILTER=true` の時のみ適用
+- 🔄 **ラベル統合** - `SED_ENABLE_LABEL_MERGE=true` の時のみ適用
+- 💾 **保存先** - `spot_features.behavior_extractor_result`
+- 📬 **完了通知** - `FEATURE_COMPLETED_QUEUE_URL` にSQS通知
 
 ## セットアップ
 
@@ -116,13 +123,7 @@ python3 test_model.py
 
 ## サーバーの起動
 
-### スタンドアロン版（従来版）
-```bash
-# APIサーバーを起動（ポート8017で動作）
-python3 main.py
-```
-
-### Supabase統合版（推奨）
+### 本番互換のSupabase統合版（推奨）
 ```bash
 # 環境変数を設定
 cp .env.example .env
@@ -132,14 +133,24 @@ cp .env.example .env
 python3 main_supabase.py
 ```
 
+### スタンドアロン版（ローカル検証用）
+```bash
+# 単発分析API
+python3 main.py
+
+# 時系列分析API
+python3 main_timeline.py
+```
+
 起動成功時の表示:
 ```
 ==================================================
-AST Audio Event Detection API
+Audio Event Detection API with Supabase
+Backend: ast_hf
 Model: MIT/ast-finetuned-audioset-10-10-0.4593
 ==================================================
-モデルをロード中: MIT/ast-finetuned-audioset-10-10-0.4593
-✅ モデルのロードに成功しました
+🔄 Loading model backend=ast_hf, model=MIT/ast-finetuned-audioset-10-10-0.4593
+✅ Model loaded successfully
 INFO:     Started server process [xxxxx]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
@@ -150,19 +161,17 @@ INFO:     Uvicorn running on http://127.0.0.1:8017
 
 ### 利用可能なサーバー
 
-このプロジェクトには2つのAPIサーバーがあります：
+このプロジェクトには3つのAPIサーバーがあります：
 
-1. **`main.py`** - 基本的な音響イベント検出
-2. **`main_timeline.py`** - 時系列分析機能付き（推奨）
+1. **`main_supabase.py`** - 本番互換。S3/Supabase/SQS連携、`/async-process` と `/fetch-and-process-paths` を提供
+2. **`main.py`** - ローカル用の基本音響イベント検出
+3. **`main_timeline.py`** - ローカル用の時系列分析API
 
 ### サーバーの起動
 
 ```bash
-# 時系列分析機能付きサーバー（推奨）
-python3 main_timeline.py
-
-# または基本サーバー
-python3 main.py
+# 本番互換の起動
+python3 main_supabase.py
 ```
 
 ### ヘルスチェック
@@ -176,7 +185,12 @@ curl http://localhost:8017/health
 ```json
 {
   "status": "healthy",
-  "model_loaded": true
+  "model_loaded": true,
+  "backend": "ast_hf",
+  "model_name": "MIT/ast-finetuned-audioset-10-10-0.4593",
+  "sampling_rate": 16000,
+  "supabase_connected": true,
+  "s3_connected": true
 }
 ```
 
@@ -184,9 +198,23 @@ curl http://localhost:8017/health
 
 ### Supabase統合版エンドポイント
 
-#### POST `/fetch-and-process-paths` - file_pathsベースの音響イベント検出（推奨）
+#### POST `/async-process` - 本番の非同期処理入口
 
-Whisper APIパターンに準拠した、Supabaseと連携する新しいエンドポイント。
+Lambda `watchme-sed-worker` が呼ぶ本番用エンドポイントです。即時に `202 Accepted` を返し、バックグラウンドで処理します。
+
+```bash
+curl -X POST "http://localhost:8017/async-process" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_path": "files/d067d407-cf73-4174-a9c1-d91fb60d64d0/2025-07-20/00-00/audio.wav",
+    "device_id": "d067d407-cf73-4174-a9c1-d91fb60d64d0",
+    "recorded_at": "2025-07-20T00:00:00+00:00"
+  }'
+```
+
+#### POST `/fetch-and-process-paths` - file_pathsベースの直接実行
+
+S3上の file path を直接指定して処理するエンドポイントです。ローカル検証や一括実行に向いています。
 
 ```bash
 curl -X POST "http://localhost:8017/fetch-and-process-paths" \
@@ -206,16 +234,13 @@ curl -X POST "http://localhost:8017/fetch-and-process-paths" \
 ##### パラメータ
 - `file_paths`: S3ファイルパスの配列（必須）
 - `threshold`: 最小確率しきい値（オプション、デフォルト: 0.1）
-- `top_k`: 返す予測結果の数（オプション、デフォルト: 3）
-- `analyze_timeline`: タイムライン分析を実行するか（オプション、デフォルト: true）
-- `segment_duration`: セグメントの長さ（秒）（オプション、デフォルト: 10.0） ⚡ **10秒が最適**
-- `overlap`: オーバーラップ率（オプション、デフォルト: 0.0） ⚡ **オーバーラップなしが最適**
+- `top_k`: 返す予測結果の数（オプション、デフォルト: 5）
+- `analyze_timeline`: リクエスト項目としては受け付けるが、現行実装では分岐に未使用
+- `segment_duration`: セグメントの長さ（秒）（オプション、デフォルト: 2.0）
+- `overlap`: オーバーラップ率（オプション、デフォルト: 0.5）
 
 ##### デフォルト設定について
-**10秒セグメント（オーバーラップなし）**が最も精度が高く、効率的にイベントを検出できることが検証されました：
-- **処理速度**: 1秒設定の約7-8倍高速
-- **検出精度**: 最も安定した検出結果
-- **データ量**: 適切なサイズで後続処理も効率的
+**2秒セグメント（50%オーバーラップ）**を現行デフォルトにしています。短い感情音や一瞬の物音を落としにくくするための高感度設定です。処理負荷は増えますが、raw寄りの観察用途を優先しています。
 
 ##### レスポンス例
 ```json
@@ -227,7 +252,6 @@ curl -X POST "http://localhost:8017/fetch-and-process-paths" \
     "errors": 0
   },
   "processed_files": ["files/.../audio.wav"],
-  "processed_time_blocks": ["00-00"],
   "error_files": null,
   "execution_time_seconds": 8.7,
   "message": "1件中1件を正常に処理しました"
@@ -238,11 +262,13 @@ curl -X POST "http://localhost:8017/fetch-and-process-paths" \
 このエンドポイントは以下のテーブルを自動的に更新します：
 
 1. **audio_files**テーブル
-   - `behavior_features_status`: 'pending' → 'processing' → 'completed'
+   - `file_path` から対象レコードを検索
+   - `local_date` と `local_time` を参照
 
-2. **behavior_yamnet**テーブル（歴史的経緯により名前はyamnetだが、現在はASTの結果を格納）
-   - `events`カラムにタイムライン形式でASTの検出結果を保存
-   - 10秒ごとのセグメントで音響イベントを記録
+2. **spot_features**テーブル
+   - `behavior_status`: `processing` → `completed` または `failed`
+   - `behavior_extractor_result` にタイムライン形式のAST結果を保存
+   - `device_id` と `recorded_at` をキーにUPSERT
    
    保存形式：
    ```json
@@ -255,6 +281,8 @@ curl -X POST "http://localhost:8017/fetch-and-process-paths" \
    ```
 
 ### スタンドアロン版エンドポイント
+
+以下は `main.py` / `main_timeline.py` 用です。本番コンテナの `main_supabase.py` には含まれません。
 
 #### 1. `/analyze_sound` - 音声ファイル全体の分析
 
@@ -453,13 +481,11 @@ lsof -i :8017
 - **出力**: 527クラスの確率分布
 - **フレームワーク**: PyTorch + Transformers
 
-## 🚀 本番環境デプロイ（2025年1月更新 - CI/CD完全自動化）
+## 🚀 本番環境デプロイ（現行構成）
 
-### 🎉 新機能: GitHub Actions CI/CD導入
+### 🎉 実装上の重要点
 
-**重要: デプロイ方法が完全に変更されました！**
-
-2025年1月より、GitHub Actionsを使用した完全自動デプロイに移行しました。mainブランチへのプッシュで自動的にデプロイが実行されます。
+`Dockerfile.prod` は `main_supabase.py` をそのままコピーし、`uvicorn main_supabase:app` で起動します。つまり本番コンテナの実体は Supabase統合版です。
 
 ### ✅ インフラ情報
 - **ECRリポジトリ**: `754724220380.dkr.ecr.ap-southeast-2.amazonaws.com/watchme-behavior-analysis-feature-extractor`
@@ -469,7 +495,7 @@ lsof -i :8017
 - **コンテナ名**: `behavior-analysis-feature-extractor`
 - **ネットワーク**: `watchme-network`
 
-### 🚀 自動デプロイ（CI/CD）- 推奨方法
+### 🚀 自動デプロイ（CI/CD）
 
 #### 1. 通常のデプロイ（mainブランチへのプッシュ）
 ```bash
@@ -482,7 +508,7 @@ git push origin main
 ```
 
 **これだけで以下が自動実行されます:**
-1. DockerイメージのビルD（ARM64対応）
+1. Dockerイメージのビルド（ARM64対応）
 2. AWS ECRへのプッシュ
 3. EC2サーバーへの自動デプロイ
 4. ヘルスチェック
@@ -523,7 +549,7 @@ graph LR
 - **デプロイスクリプト**: `./run-prod.sh`
 
 ### ⚠️ ポート設定の注意
-AST APIは統一して**8017ポート**で動作します：
+Behavior Features API は **8017ポート** で動作します：
 ```yaml
 # docker-compose.prod.yml
 ports:
@@ -572,13 +598,12 @@ curl http://localhost:8017/health
 ### API利用例
 ```bash
 # 本番環境での利用
-curl -X POST "https://api.hey-watch.me/behavior-features/fetch-and-process-paths" \
+curl -X POST "https://api.hey-watch.me/behavior-analysis/features/async-process" \
   -H "Content-Type: application/json" \
   -d '{
-    "file_paths": ["files/device_id/date/time/audio.wav"],
-    "threshold": 0.1,
-    "top_k": 3,
-    "segment_duration": 10.0
+    "file_path": "files/device_id/date/time/audio.wav",
+    "device_id": "device_id",
+    "recorded_at": "2025-07-20T00:00:00+00:00"
   }'
 ```
 

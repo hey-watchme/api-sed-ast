@@ -9,7 +9,6 @@ import json
 import tempfile
 import traceback
 from typing import List, Dict, Optional
-from datetime import datetime, timezone
 import time
 
 import numpy as np
@@ -18,7 +17,7 @@ import soundfile as sf
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uvicorn
 
 # AWS S3 and Supabase
@@ -37,6 +36,7 @@ from model_backends import BaseSedBackend, create_backend
 # Global model backend (switchable)
 sed_backend: Optional[BaseSedBackend] = None
 DEFAULT_SAMPLING_RATE = 16000
+APP_VERSION = "3.0.0"
 
 # Supabaseクライアントの初期化
 supabase_url = os.getenv('SUPABASE_URL')
@@ -48,18 +48,15 @@ if not supabase_url or not supabase_key:
 supabase: Client = create_client(supabase_url, supabase_key)
 print(f"✅ Supabase接続設定完了: {supabase_url}")
 
-# AWS SQSクライアントの初期化
-sqs = boto3.client('sqs', region_name='ap-southeast-2')
-FEATURE_COMPLETED_QUEUE_URL = os.environ.get(
-    'FEATURE_COMPLETED_QUEUE_URL',
-    'https://sqs.ap-southeast-2.amazonaws.com/754724220380/watchme-feature-completed-queue'
-)
-
 # AWS S3クライアントの初期化
 aws_access_key_id = os.getenv('AWS_ACCESS_KEY_ID')
 aws_secret_access_key = os.getenv('AWS_SECRET_ACCESS_KEY')
 s3_bucket_name = os.getenv('S3_BUCKET_NAME', 'watchme-vault')
 aws_region = os.getenv('AWS_REGION', 'ap-southeast-2')
+FEATURE_COMPLETED_QUEUE_URL = os.environ.get(
+    'FEATURE_COMPLETED_QUEUE_URL',
+    'https://sqs.ap-southeast-2.amazonaws.com/754724220380/watchme-feature-completed-queue'
+)
 
 if not aws_access_key_id or not aws_secret_access_key:
     raise ValueError("AWS_ACCESS_KEY_IDおよびAWS_SECRET_ACCESS_KEYが設定されていません")
@@ -72,11 +69,14 @@ s3_client = boto3.client(
 )
 print(f"✅ AWS S3接続設定完了: バケット={s3_bucket_name}, リージョン={aws_region}")
 
+# AWS SQSクライアントの初期化
+sqs = boto3.client('sqs', region_name=aws_region)
+
 # FastAPI application
 app = FastAPI(
     title="AST Audio Event Detection API with Supabase",
     description="Audio Spectrogram Transformer for sound event detection (Supabase integration) - v3",
-    version="3.0.0"
+    version=APP_VERSION
 )
 
 # CORSミドルウェアの設定
@@ -91,11 +91,11 @@ app.add_middleware(
 # リクエストモデル
 class FetchAndProcessPathsRequest(BaseModel):
     file_paths: List[str]
-    threshold: Optional[float] = 0.1
-    top_k: Optional[int] = 3
+    threshold: float = Field(default=0.1, ge=0.0, le=1.0)
+    top_k: int = Field(default=5, ge=1)
     analyze_timeline: Optional[bool] = True
-    segment_duration: Optional[float] = 10.0  # 10秒が最適
-    overlap: Optional[float] = 0.0  # オーバーラップなしが最適
+    segment_duration: float = Field(default=2.0, gt=0.0)  # 高感度検出向け
+    overlap: float = Field(default=0.5, ge=0.0, lt=1.0)  # 50% overlap for short events
 
 def load_model():
     """Load configured SED backend model."""
@@ -127,27 +127,22 @@ def get_backend_id() -> str:
         return sed_backend.backend_id
     return os.getenv("SED_MODEL_BACKEND", "ast_hf")
 
-def extract_info_from_file_path(file_path: str) -> Dict[str, str]:
-    """
-    ファイルパスからデバイスID、日付、時間ブロックを抽出
-
-    Args:
-        file_path: S3ファイルパス (例: files/device-id/2025-07-20/14-30/audio.wav)
-
-    Returns:
-        device_id, date, time_block を含む辞書
-    """
-    parts = file_path.split('/')
-
-    if len(parts) >= 2:
-        device_id = parts[1]
-        return {
-            'device_id': device_id
-        }
-    else:
-        return {
-            'device_id': 'unknown'
-        }
+def validate_processing_options(
+    *,
+    segment_duration: float,
+    overlap: float,
+    top_k: int,
+    threshold: float,
+) -> None:
+    """Validate processing options before timeline slicing."""
+    if segment_duration <= 0:
+        raise ValueError("segment_duration must be greater than 0")
+    if not 0 <= overlap < 1:
+        raise ValueError("overlap must be between 0 and 1 (1 is not allowed)")
+    if top_k <= 0:
+        raise ValueError("top_k must be greater than 0")
+    if not 0 <= threshold <= 1:
+        raise ValueError("threshold must be between 0 and 1")
 
 async def save_to_spot_features(device_id: str, recorded_at: str,
                                  timeline_data: List[Dict]):
@@ -160,8 +155,6 @@ async def save_to_spot_features(device_id: str, recorded_at: str,
         timeline_data: タイムライン形式のイベントデータ
     """
     try:
-        processed_at = datetime.now(timezone.utc).isoformat()
-
         # Get local_date and local_time from audio_files table
         local_date = None
         local_time = None
@@ -287,9 +280,9 @@ def predict_audio_events(audio_data: np.ndarray, top_k: int = 5,
     return predictions
 
 def analyze_timeline(audio_data: np.ndarray, sample_rate: int,
-                    segment_duration: float = 10.0,
-                    overlap: float = 0.0,
-                    top_k: int = 3,
+                    segment_duration: float = 2.0,
+                    overlap: float = 0.5,
+                    top_k: int = 5,
                     threshold: float = 0.1) -> Dict:
     """
     Analyze audio data in timeline segments
@@ -297,14 +290,21 @@ def analyze_timeline(audio_data: np.ndarray, sample_rate: int,
     Args:
         audio_data: Audio data
         sample_rate: Sampling rate
-        segment_duration: Segment length in seconds (default 10s)
-        overlap: Overlap ratio (0-1, default 0)
-        top_k: Number of events to return per segment
+        segment_duration: Segment length in seconds (default 2s)
+        overlap: Overlap ratio (0-1, default 0.5)
+        top_k: Number of events to return per segment (default 5)
         threshold: Minimum probability threshold
 
     Returns:
         Timeline analysis results
     """
+    validate_processing_options(
+        segment_duration=segment_duration,
+        overlap=overlap,
+        top_k=top_k,
+        threshold=threshold,
+    )
+
     # Preprocess audio
     processed_audio = process_audio(audio_data, sample_rate)
     target_sr = get_sampling_rate()
@@ -373,10 +373,9 @@ def analyze_timeline(audio_data: np.ndarray, sample_rate: int,
         }
     }
 
-async def process_single_file(file_path: str, threshold: float = 0.1, top_k: int = 3,
-                             analyze_timeline_flag: bool = True,
-                             segment_duration: float = 10.0,
-                             overlap: float = 0.0) -> Dict:
+async def process_single_file(file_path: str, threshold: float = 0.1, top_k: int = 5,
+                             segment_duration: float = 2.0,
+                             overlap: float = 0.5) -> Dict:
     """
     単一ファイルを処理（タイムライン形式で保存）
     """
@@ -451,10 +450,11 @@ async def root():
         "message": "Audio Event Detection API with Supabase Integration (Pluggable backend)",
         "backend": get_backend_id(),
         "model": get_model_name(),
-        "version": "2.1.0",
-        "sampling_rate": f"{get_sampling_rate()} Hz",
+        "version": APP_VERSION,
+        "sampling_rate": get_sampling_rate(),
         "status": "ready" if sed_backend is not None else "not ready",
         "endpoints": {
+            "/async-process": "Process a single S3 audio file asynchronously",
             "/fetch-and-process-paths": "Process audio files from S3 via file paths",
             "/health": "Health check endpoint",
             "/filter-config": "Get event filter configuration"
@@ -617,6 +617,8 @@ async def fetch_and_process_paths(request: FetchAndProcessPathsRequest):
     """
     if sed_backend is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
+    if not request.file_paths:
+        raise HTTPException(status_code=422, detail="file_paths must contain at least one entry")
 
     start_time = time.time()
 
@@ -630,7 +632,6 @@ async def fetch_and_process_paths(request: FetchAndProcessPathsRequest):
             file_path,
             request.threshold,
             request.top_k,
-            request.analyze_timeline,
             request.segment_duration,
             request.overlap
         )

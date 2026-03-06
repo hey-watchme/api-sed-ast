@@ -25,7 +25,8 @@
 | モデル種別 | AST (Audio Spectrogram Transformer) |
 | 学習データ | AudioSetベース（527ラベル） |
 | 入力サンプリングレート | 16kHz |
-| 推論時ラベルフィルタ | あり（blacklist + label merge） |
+| 推論時ラベルフィルタ | デフォルト無効（raw出力、必要時のみ環境変数で有効化） |
+| API version | `3.0.0` |
 
 実装参照:
 
@@ -38,9 +39,9 @@
 | 項目 | 値 |
 |---|---|
 | `threshold` | `0.1` |
-| `top_k` | `3` |
-| `segment_duration` | `10.0s` |
-| `overlap` | `0.0` |
+| `top_k` | `5` |
+| `segment_duration` | `2.0s` |
+| `overlap` | `0.5` |
 
 備考: `/async-process` のバックグラウンド処理は上記デフォルトで動作。
 
@@ -58,6 +59,8 @@
 ## 3. EC2リソース占有（AST実測スナップショット）
 
 計測時刻: 2026-03-06 01:11 JST（EC2出力: 2026-03-05 16:11 UTC）
+
+注意: このセクションは当時の実測スナップショットであり、再開時点の現況確認は AWS MCP または AWS CLI で再確認すること。
 
 ### 3.1 インスタンス全体
 
@@ -128,7 +131,7 @@
 
 | Run ID | 日時 | モデル | テスト音源セット | パラメータ | 主な結果 | 備考 |
 |---|---|---|---|---|---|---|
-|  |  |  |  | `threshold=0.1, top_k=3, segment=10s, overlap=0` |  |  |
+|  |  |  |  | `threshold=0.1, top_k=5, segment=2s, overlap=0.5` |  |  |
 
 ---
 
@@ -189,9 +192,11 @@ cd /Users/kaya.matsumoto/projects/watchme/api/behavior-analysis/feature-extracto
 # 変更状況確認
 git status --short
 
-# AWSプロファイル確認
-aws sts get-caller-identity
+# AWSプロファイル確認（admin優先）
 aws sts get-caller-identity --profile admin
+
+# defaultも確認したい場合のみ
+aws sts get-caller-identity
 ```
 
 ### 8.4 次の作業開始ポイント

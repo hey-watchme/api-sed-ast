@@ -2,15 +2,24 @@
 """
 Event filtering and label merging configuration for AST audio event detection.
 
-This config allows easy on/off toggle for filtering/merging.
-If the model changes, simply disable filtering or update these lists.
+Raw output is now the default. Filtering remains available via environment
+variables when comparison with the legacy setup is needed.
 """
+
+import os
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 # ========================================
 # FEATURE FLAGS - Easy on/off toggle
 # ========================================
-ENABLE_BLACKLIST_FILTER = True
-ENABLE_LABEL_MERGE = True
+ENABLE_BLACKLIST_FILTER = _env_flag("SED_ENABLE_BLACKLIST_FILTER", False)
+ENABLE_LABEL_MERGE = _env_flag("SED_ENABLE_LABEL_MERGE", False)
 
 
 # ========================================
