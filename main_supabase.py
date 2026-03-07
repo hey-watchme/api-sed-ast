@@ -97,8 +97,12 @@ SED_ASYNC_JOB_WORKERS = _read_max_workers("SED_ASYNC_JOB_WORKERS", 1)
 sed_async_executor = ThreadPoolExecutor(max_workers=SED_ASYNC_JOB_WORKERS)
 print(f"ℹ️ SED async job workers: {SED_ASYNC_JOB_WORKERS}")
 
-SED_JOB_QUEUE_URL = os.environ.get("SED_JOB_QUEUE_URL", "")
-SED_JOB_QUEUE_ENABLED = _read_bool("SED_JOB_QUEUE_ENABLED", False)
+SED_JOB_QUEUE_URL = os.environ.get(
+    "SED_JOB_QUEUE_URL",
+    "https://sqs.ap-southeast-2.amazonaws.com/754724220380/watchme-sed-job-queue-v1.fifo",
+)
+SED_JOB_QUEUE_ENABLED = _read_bool("SED_JOB_QUEUE_ENABLED", True)
+SED_ALLOW_IN_PROCESS_FALLBACK = _read_bool("SED_ALLOW_IN_PROCESS_FALLBACK", False)
 SED_JOB_QUEUE_WAIT_SECONDS = max(1, min(20, int(os.environ.get("SED_JOB_QUEUE_WAIT_SECONDS", "20"))))
 SED_JOB_QUEUE_VISIBILITY_TIMEOUT = max(60, int(os.environ.get("SED_JOB_QUEUE_VISIBILITY_TIMEOUT", "600")))
 sed_queue_worker_stop_event = threading.Event()
@@ -487,7 +491,7 @@ async def startup_event():
         sed_queue_worker_thread.start()
         print(f"✅ SED queue worker started: {SED_JOB_QUEUE_URL}")
     else:
-        print("ℹ️ SED queue worker disabled (using in-process executor fallback)")
+        print("ℹ️ SED queue worker disabled")
 
 
 @app.on_event("shutdown")
@@ -549,37 +553,54 @@ async def async_process(
     """Asynchronous processing endpoint - returns 202 Accepted immediately"""
     print(f"Starting async processing for {request.device_id} at {request.recorded_at}")
 
-    message = "Processing started in background"
-    transport = "in_process_executor"
-
-    if SED_JOB_QUEUE_ENABLED and SED_JOB_QUEUE_URL:
-        try:
-            update_status(request.device_id, request.recorded_at, "behavior_status", "queued")
-            _enqueue_sed_job(
-                file_path=request.file_path,
-                device_id=request.device_id,
-                recorded_at=request.recorded_at,
-                trigger_source="sed-worker",
-            )
-            message = "Processing queued"
-            transport = "sqs"
-        except Exception as e:
-            print(f"⚠️ Failed to enqueue SED job, fallback to in-process executor: {e}")
-            traceback.print_exc()
-
-    if transport != "sqs":
-        # Fallback mode for environments where queue worker rollout is not enabled yet.
+    if not SED_JOB_QUEUE_ENABLED or not SED_JOB_QUEUE_URL:
+        if not SED_ALLOW_IN_PROCESS_FALLBACK:
+            raise HTTPException(status_code=503, detail="SED queue mode is disabled or misconfigured")
         sed_async_executor.submit(
             _run_process_in_background,
             request.file_path,
             request.device_id,
             request.recorded_at
         )
+        return {
+            "status": "accepted",
+            "message": "Processing started in background",
+            "transport": "in_process_executor",
+            "device_id": request.device_id,
+            "recorded_at": request.recorded_at
+        }
+
+    try:
+        update_status(request.device_id, request.recorded_at, "behavior_status", "queued")
+        _enqueue_sed_job(
+            file_path=request.file_path,
+            device_id=request.device_id,
+            recorded_at=request.recorded_at,
+            trigger_source="sed-worker",
+        )
+    except Exception as e:
+        print(f"❌ Failed to enqueue SED job: {e}")
+        traceback.print_exc()
+        if not SED_ALLOW_IN_PROCESS_FALLBACK:
+            raise HTTPException(status_code=503, detail="Failed to enqueue SED job")
+        sed_async_executor.submit(
+            _run_process_in_background,
+            request.file_path,
+            request.device_id,
+            request.recorded_at
+        )
+        return {
+            "status": "accepted",
+            "message": "Processing started in background",
+            "transport": "in_process_executor",
+            "device_id": request.device_id,
+            "recorded_at": request.recorded_at
+        }
 
     return {
         "status": "accepted",
-        "message": message,
-        "transport": transport,
+        "message": "Processing queued",
+        "transport": "sqs",
         "device_id": request.device_id,
         "recorded_at": request.recorded_at
     }
