@@ -44,6 +44,10 @@ AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
 S3_BUCKET_NAME=watchme-vault
 AWS_REGION=ap-southeast-2
 FEATURE_COMPLETED_QUEUE_URL=https://sqs.ap-southeast-2.amazonaws.com/754724220380/watchme-feature-completed-queue
+SED_JOB_QUEUE_ENABLED=true
+SED_JOB_QUEUE_URL=https://sqs.ap-southeast-2.amazonaws.com/754724220380/watchme-sed-job-queue-v1.fifo
+SED_JOB_QUEUE_WAIT_SECONDS=20
+SED_JOB_QUEUE_VISIBILITY_TIMEOUT=600
 
 # SED backend設定
 SED_MODEL_BACKEND=ast_hf

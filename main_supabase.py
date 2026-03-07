@@ -9,6 +9,8 @@ import json
 import tempfile
 import traceback
 import asyncio
+import hashlib
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Optional
 import time
@@ -84,9 +86,23 @@ def _read_max_workers(env_name: str, default: int = 1) -> int:
         return default
 
 
+def _read_bool(env_name: str, default: bool = False) -> bool:
+    raw_value = os.environ.get(env_name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 SED_ASYNC_JOB_WORKERS = _read_max_workers("SED_ASYNC_JOB_WORKERS", 1)
 sed_async_executor = ThreadPoolExecutor(max_workers=SED_ASYNC_JOB_WORKERS)
 print(f"ℹ️ SED async job workers: {SED_ASYNC_JOB_WORKERS}")
+
+SED_JOB_QUEUE_URL = os.environ.get("SED_JOB_QUEUE_URL", "")
+SED_JOB_QUEUE_ENABLED = _read_bool("SED_JOB_QUEUE_ENABLED", False)
+SED_JOB_QUEUE_WAIT_SECONDS = max(1, min(20, int(os.environ.get("SED_JOB_QUEUE_WAIT_SECONDS", "20"))))
+SED_JOB_QUEUE_VISIBILITY_TIMEOUT = max(60, int(os.environ.get("SED_JOB_QUEUE_VISIBILITY_TIMEOUT", "600")))
+sed_queue_worker_stop_event = threading.Event()
+sed_queue_worker_thread: Optional[threading.Thread] = None
 
 # FastAPI application
 app = FastAPI(
@@ -457,12 +473,29 @@ async def process_single_file(file_path: str, threshold: float = 0.1, top_k: int
 @app.on_event("startup")
 async def startup_event():
     """サーバー起動時にモデルをロード"""
+    global sed_queue_worker_thread
+
     load_model()
+
+    if SED_JOB_QUEUE_ENABLED and SED_JOB_QUEUE_URL:
+        sed_queue_worker_stop_event.clear()
+        sed_queue_worker_thread = threading.Thread(
+            target=_consume_sed_job_queue,
+            name="sed-job-queue-worker",
+            daemon=True,
+        )
+        sed_queue_worker_thread.start()
+        print(f"✅ SED queue worker started: {SED_JOB_QUEUE_URL}")
+    else:
+        print("ℹ️ SED queue worker disabled (using in-process executor fallback)")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """サーバー終了時に非同期ジョブ実行スレッドを停止"""
+    sed_queue_worker_stop_event.set()
+    if sed_queue_worker_thread and sed_queue_worker_thread.is_alive():
+        sed_queue_worker_thread.join(timeout=2)
     sed_async_executor.shutdown(wait=False, cancel_futures=False)
 
 @app.get("/")
@@ -516,20 +549,100 @@ async def async_process(
     """Asynchronous processing endpoint - returns 202 Accepted immediately"""
     print(f"Starting async processing for {request.device_id} at {request.recorded_at}")
 
-    # Offload heavy processing to a dedicated thread so the API can acknowledge immediately.
-    sed_async_executor.submit(
-        _run_process_in_background,
-        request.file_path,
-        request.device_id,
-        request.recorded_at
-    )
+    message = "Processing started in background"
+    transport = "in_process_executor"
+
+    if SED_JOB_QUEUE_ENABLED and SED_JOB_QUEUE_URL:
+        try:
+            update_status(request.device_id, request.recorded_at, "behavior_status", "queued")
+            _enqueue_sed_job(
+                file_path=request.file_path,
+                device_id=request.device_id,
+                recorded_at=request.recorded_at,
+                trigger_source="sed-worker",
+            )
+            message = "Processing queued"
+            transport = "sqs"
+        except Exception as e:
+            print(f"⚠️ Failed to enqueue SED job, fallback to in-process executor: {e}")
+            traceback.print_exc()
+
+    if transport != "sqs":
+        # Fallback mode for environments where queue worker rollout is not enabled yet.
+        sed_async_executor.submit(
+            _run_process_in_background,
+            request.file_path,
+            request.device_id,
+            request.recorded_at
+        )
 
     return {
         "status": "accepted",
-        "message": "Processing started in background",
+        "message": message,
+        "transport": transport,
         "device_id": request.device_id,
         "recorded_at": request.recorded_at
     }
+
+
+def _enqueue_sed_job(*, file_path: str, device_id: str, recorded_at: str, trigger_source: str) -> None:
+    payload = {
+        "file_path": file_path,
+        "device_id": device_id,
+        "recorded_at": recorded_at,
+        "feature_type": "behavior",
+        "trigger_source": trigger_source,
+        "queued_at": int(time.time()),
+    }
+
+    send_kwargs = {
+        "QueueUrl": SED_JOB_QUEUE_URL,
+        "MessageBody": json.dumps(payload),
+    }
+
+    if SED_JOB_QUEUE_URL.endswith(".fifo"):
+        dedupe_input = f"{device_id}:{recorded_at}:{file_path}:behavior"
+        send_kwargs["MessageGroupId"] = f"{device_id}-behavior"
+        send_kwargs["MessageDeduplicationId"] = hashlib.sha256(dedupe_input.encode("utf-8")).hexdigest()[:80]
+
+    sqs.send_message(**send_kwargs)
+
+
+def _consume_sed_job_queue() -> None:
+    print("🔁 SED queue consumer loop started")
+
+    while not sed_queue_worker_stop_event.is_set():
+        try:
+            response = sqs.receive_message(
+                QueueUrl=SED_JOB_QUEUE_URL,
+                MaxNumberOfMessages=1,
+                WaitTimeSeconds=SED_JOB_QUEUE_WAIT_SECONDS,
+                VisibilityTimeout=SED_JOB_QUEUE_VISIBILITY_TIMEOUT,
+            )
+            messages = response.get("Messages", [])
+            if not messages:
+                continue
+
+            for message in messages:
+                receipt_handle = message["ReceiptHandle"]
+                body = json.loads(message["Body"])
+
+                file_path = body["file_path"]
+                device_id = body["device_id"]
+                recorded_at = body["recorded_at"]
+
+                try:
+                    asyncio.run(process_in_background(file_path, device_id, recorded_at))
+                    sqs.delete_message(QueueUrl=SED_JOB_QUEUE_URL, ReceiptHandle=receipt_handle)
+                    print(f"✅ SED queue job done: {device_id}/{recorded_at}")
+                except Exception as e:
+                    print(f"❌ SED queue job failed (will retry): {device_id}/{recorded_at} - {e}")
+                    traceback.print_exc()
+
+        except Exception as e:
+            print(f"❌ SED queue consumer error: {e}")
+            traceback.print_exc()
+            time.sleep(2)
 
 
 def _run_process_in_background(file_path: str, device_id: str, recorded_at: str):
