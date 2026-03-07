@@ -8,13 +8,15 @@ import os
 import json
 import tempfile
 import traceback
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Optional
 import time
 
 import numpy as np
 import librosa
 import soundfile as sf
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -71,6 +73,20 @@ print(f"✅ AWS S3接続設定完了: バケット={s3_bucket_name}, リージ�
 
 # AWS SQSクライアントの初期化
 sqs = boto3.client('sqs', region_name=aws_region)
+
+
+def _read_max_workers(env_name: str, default: int = 1) -> int:
+    raw_value = os.environ.get(env_name, str(default))
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        print(f"⚠️ Invalid {env_name}={raw_value}, fallback to {default}")
+        return default
+
+
+SED_ASYNC_JOB_WORKERS = _read_max_workers("SED_ASYNC_JOB_WORKERS", 1)
+sed_async_executor = ThreadPoolExecutor(max_workers=SED_ASYNC_JOB_WORKERS)
+print(f"ℹ️ SED async job workers: {SED_ASYNC_JOB_WORKERS}")
 
 # FastAPI application
 app = FastAPI(
@@ -443,6 +459,12 @@ async def startup_event():
     """サーバー起動時にモデルをロード"""
     load_model()
 
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """サーバー終了時に非同期ジョブ実行スレッドを停止"""
+    sed_async_executor.shutdown(wait=False, cancel_futures=False)
+
 @app.get("/")
 async def root():
     """Root endpoint"""
@@ -489,15 +511,14 @@ class AsyncProcessRequest(BaseModel):
 
 @app.post("/async-process", status_code=202)
 async def async_process(
-    request: AsyncProcessRequest,
-    background_tasks: BackgroundTasks
+    request: AsyncProcessRequest
 ):
     """Asynchronous processing endpoint - returns 202 Accepted immediately"""
     print(f"Starting async processing for {request.device_id} at {request.recorded_at}")
 
-    # Add to background tasks (including status update)
-    background_tasks.add_task(
-        process_in_background,
+    # Offload heavy processing to a dedicated thread so the API can acknowledge immediately.
+    sed_async_executor.submit(
+        _run_process_in_background,
         request.file_path,
         request.device_id,
         request.recorded_at
@@ -509,6 +530,14 @@ async def async_process(
         "device_id": request.device_id,
         "recorded_at": request.recorded_at
     }
+
+
+def _run_process_in_background(file_path: str, device_id: str, recorded_at: str):
+    try:
+        asyncio.run(process_in_background(file_path, device_id, recorded_at))
+    except Exception as e:
+        print(f"Background runner crashed for {device_id}/{recorded_at}: {str(e)}")
+        traceback.print_exc()
 
 
 async def process_in_background(file_path: str, device_id: str, recorded_at: str):
