@@ -722,24 +722,16 @@ async def process_in_background(file_path: str, device_id: str, recorded_at: str
 def update_status(device_id: str, recorded_at: str, status_field: str, status_value: str):
     """Update processing status in spot_features table"""
     try:
-        response = supabase.table('spot_features').update({
+        payload = {
+            'device_id': device_id,
+            'recorded_at': recorded_at,
             status_field: status_value
-        }).eq(
-            'device_id', device_id
-        ).eq(
-            'recorded_at', recorded_at
+        }
+        supabase.table('spot_features').upsert(
+            payload,
+            on_conflict='device_id,recorded_at'
         ).execute()
-
-        if response.data:
-            print(f"Status updated: {device_id}/{recorded_at} - {status_field}={status_value}")
-        else:
-            insert_data = {
-                'device_id': device_id,
-                'recorded_at': recorded_at,
-                status_field: status_value
-            }
-            supabase.table('spot_features').insert(insert_data).execute()
-            print(f"Status record created: {device_id}/{recorded_at} - {status_field}={status_value}")
+        print(f"Status upserted: {device_id}/{recorded_at} - {status_field}={status_value}")
 
     except Exception as e:
         print(f"Failed to update status: {str(e)}")
