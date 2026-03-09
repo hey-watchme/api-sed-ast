@@ -130,8 +130,8 @@ class FetchAndProcessPathsRequest(BaseModel):
     threshold: float = Field(default=0.1, ge=0.0, le=1.0)
     top_k: int = Field(default=5, ge=1)
     analyze_timeline: Optional[bool] = True
-    segment_duration: float = Field(default=2.0, gt=0.0)  # 高感度検出向け
-    overlap: float = Field(default=0.5, ge=0.0, lt=1.0)  # 50% overlap for short events
+    segment_duration: float = Field(default=5.0, gt=0.0)
+    overlap: float = Field(default=0.2, ge=0.0, lt=1.0)
 
 def load_model():
     """Load configured SED backend model."""
@@ -316,8 +316,8 @@ def predict_audio_events(audio_data: np.ndarray, top_k: int = 5,
     return predictions
 
 def analyze_timeline(audio_data: np.ndarray, sample_rate: int,
-                    segment_duration: float = 2.0,
-                    overlap: float = 0.5,
+                    segment_duration: float = 5.0,
+                    overlap: float = 0.2,
                     top_k: int = 5,
                     threshold: float = 0.1) -> Dict:
     """
@@ -410,8 +410,8 @@ def analyze_timeline(audio_data: np.ndarray, sample_rate: int,
     }
 
 async def process_single_file(file_path: str, threshold: float = 0.1, top_k: int = 5,
-                             segment_duration: float = 2.0,
-                             overlap: float = 0.5) -> Dict:
+                             segment_duration: float = 5.0,
+                             overlap: float = 0.2) -> Dict:
     """
     単一ファイルを処理（タイムライン形式で保存）
     """

@@ -40,8 +40,8 @@
 |---|---|
 | `threshold` | `0.1` |
 | `top_k` | `5` |
-| `segment_duration` | `2.0s` |
-| `overlap` | `0.5` |
+| `segment_duration` | `5.0s` |
+| `overlap` | `0.2` |
 
 備考: `/async-process` のバックグラウンド処理は上記デフォルトで動作。
 
